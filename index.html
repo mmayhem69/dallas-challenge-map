@@ -3,23 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Austin Map - Fully Secure</title>
+    <title>Austin Map - Live Sync Dashboard</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.css" />
     <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.min.js"></script>
 
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
     <style>
         body { margin: 0; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
         #map { height: 100vh; width: 100vw; background: #e5e3df; }
         
-        /* Security Status */
         .lock-status { position: absolute; top: 10px; left: 10px; z-index: 3000; padding: 5px 12px; border-radius: 20px; font-size: 10px; font-weight: bold; text-transform: uppercase; cursor: pointer; transition: 0.3s; }
         .status-locked { background: #ea4335; color: white; box-shadow: 0 0 10px rgba(234,67,53,0.4); }
         .status-unlocked { background: #34a853; color: white; box-shadow: 0 0 10px rgba(52,168,83,0.4); }
 
-        /* Dashboard Components */
         .progress-container { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); z-index: 2000; background: white; padding: 15px 25px; border-radius: 50px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); width: 350px; text-align: center; }
         .bar-bg { background: #e8eaed; height: 12px; border-radius: 10px; width: 100%; overflow: hidden; margin-top: 8px; }
         .bar-fill { background: linear-gradient(90deg, #34a853, #2ecc71); height: 100%; width: 0%; transition: width 0.5s; }
@@ -37,7 +38,6 @@
         .item-row.done span { text-decoration: line-through; color: #bdc1c6; }
         .delete-small { background: none; border: none; color: #ea4335; cursor: pointer; font-weight: bold; font-size: 16px; }
         
-        /* Input Toggles */
         .admin-only { display: none !important; }
         .is-admin .admin-only { display: flex !important; display: block !important; }
         input:read-only { background: transparent; cursor: default; border: none !important; }
@@ -64,9 +64,7 @@
 <div class="daily-dashboard">
     <input type="text" id="dailyTitle" readonly style="border:none; font-size:16px; font-weight:800; outline:none;" value="Daily Challenges">
     <input type="text" id="dailyDate" readonly style="border:none; font-size:12px; color:grey; margin-bottom:10px; outline:none;" placeholder="No date set">
-    
     <div id="dailyList" style="overflow-y:auto; flex-grow:1; padding-right:5px;"></div>
-    
     <div class="add-row admin-only" style="gap:5px; margin-top:10px;">
         <input type="text" id="dailyInput" placeholder="Add task..." style="flex:1; padding:6px; font-size:12px; border:1px solid #ddd; border-radius:4px;">
         <button onclick="addDailyItem()" style="background:#34a853; color:white; border:none; padding:0 12px; border-radius:4px; cursor:pointer;">+</button>
@@ -76,6 +74,22 @@
 <div id="map"></div>
 
 <script>
+    // --- FIREBASE CONFIG ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyCKJAVMMDxEbmrF3samhozl9PbdNmMvqrY",
+      authDomain: "dallas-map-76f9f.firebaseapp.com",
+      databaseURL: "https://dallas-map-76f9f-default-rtdb.firebaseio.com",
+      projectId: "dallas-map-76f9f",
+      storageBucket: "dallas-map-76f9f.firebasestorage.app",
+      messagingSenderId: "572673146945",
+      appId: "1:572673146945:web:72eff975564382c75c06c0",
+      measurementId: "G-42VDPKQQ0F"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // --- INITIALIZE MAP ---
     const map = L.map('map').setView([30.2672, -97.7431], 14);
     let zoneLayers = L.featureGroup().addTo(map);
     L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { subdomains:['mt0','mt1','mt2','mt3'] }).addTo(map);
@@ -83,10 +97,10 @@
     let isAdmin = false;
     const PASS = "austin2026";
 
+    // --- AUTH LOGIC ---
     function handleAuth() {
         if (!isAdmin) {
-            const entry = prompt("Enter Password to Edit:");
-            if (entry === PASS) {
+            if (prompt("Enter Password to Edit:") === PASS) {
                 isAdmin = true;
                 applySecurity(true);
             } else { alert("Incorrect password."); }
@@ -97,55 +111,62 @@
     }
 
     function applySecurity(isUnlocking) {
-        const body = document.body;
+        document.body.classList.toggle('is-admin', isUnlocking);
         const lockBtn = document.getElementById('lockBtn');
-        const points = document.getElementById('pointsLabel');
-        const titleIn = document.getElementById('dailyTitle');
-        const dateIn = document.getElementById('dailyDate');
+        lockBtn.innerText = isUnlocking ? "Admin Active (Unlocked)" : "Locked (View Only)";
+        lockBtn.className = isUnlocking ? "lock-status status-unlocked" : "lock-status status-locked";
+        
+        document.getElementById('pointsLabel').onclick = isUnlocking ? updatePoints : null;
+        document.getElementById('pointsLabel').classList.toggle('editable-points', isUnlocking);
+        document.getElementById('dailyTitle').readOnly = !isUnlocking;
+        document.getElementById('dailyDate').readOnly = !isUnlocking;
 
         if (isUnlocking) {
-            body.classList.add('is-admin');
-            lockBtn.innerText = "Admin Active (Unlocked)";
-            lockBtn.className = "lock-status status-unlocked";
-            points.classList.add('editable-points');
-            points.onclick = updatePoints;
-            titleIn.readOnly = false;
-            dateIn.readOnly = false;
+            document.getElementById('dailyTitle').onchange = (e) => db.ref('meta/title').set(e.target.value);
+            document.getElementById('dailyDate').onchange = (e) => db.ref('meta/date').set(e.target.value);
         } else {
-            body.classList.remove('is-admin');
-            lockBtn.innerText = "Locked (View Only)";
-            lockBtn.className = "lock-status status-locked";
-            points.classList.remove('editable-points');
-            points.onclick = null;
-            titleIn.readOnly = true;
-            dateIn.readOnly = true;
             disableAll();
         }
         renderDaily();
     }
 
-    // --- PROGRESS ---
-    let currentPoints = 0;
+    // --- SYNC PROGRESS & META ---
     function updatePoints() {
         if (!isAdmin) return;
-        const input = prompt("Total Score / Change score (+/-):", currentPoints);
+        const current = parseInt(document.getElementById('currentPoints').innerText);
+        const input = prompt("Total Score / Change score (+/-):", current);
         if (input === null) return;
-        if (input.startsWith('+')) currentPoints += parseInt(input.substring(1)) || 0;
-        else if (input.startsWith('-')) currentPoints -= parseInt(input.substring(1)) || 0;
-        else currentPoints = parseInt(input) || 0;
-        currentPoints = Math.max(0, Math.min(100, currentPoints));
-        document.getElementById('currentPoints').innerText = currentPoints;
-        document.getElementById('progressBar').style.width = currentPoints + '%';
+        let newVal = input.startsWith('+') ? current + parseInt(input.substring(1)) : (input.startsWith('-') ? current - parseInt(input.substring(1)) : parseInt(input));
+        db.ref('meta/points').set(Math.max(0, Math.min(100, newVal || 0)));
     }
 
-    // --- DAILY ---
+    db.ref('meta').on('value', snap => {
+        const data = snap.val() || {};
+        const p = data.points || 0;
+        document.getElementById('currentPoints').innerText = p;
+        document.getElementById('progressBar').style.width = p + '%';
+        document.getElementById('dailyTitle').value = data.title || "Daily Challenges";
+        document.getElementById('dailyDate').value = data.date || "";
+    });
+
+    // --- SYNC DAILY TASKS ---
     let dailyTasks = [];
+    db.ref('daily').on('value', snap => {
+        dailyTasks = snap.val() || [];
+        renderDaily();
+    });
+
     function addDailyItem() {
         const inp = document.getElementById('dailyInput');
-        if (inp.value.trim()) { dailyTasks.push({ text: inp.value.trim(), done: false }); inp.value = ''; renderDaily(); }
+        if (inp.value.trim()) {
+            dailyTasks.push({ text: inp.value.trim(), done: false });
+            db.ref('daily').set(dailyTasks);
+            inp.value = '';
+        }
     }
-    window.toggleDaily = (i) => { if(isAdmin) { dailyTasks[i].done = !dailyTasks[i].done; renderDaily(); } };
-    window.delDaily = (i) => { if(isAdmin) { dailyTasks.splice(i, 1); renderDaily(); } };
+    window.toggleDaily = (i) => { if(isAdmin) { dailyTasks[i].done = !dailyTasks[i].done; db.ref('daily').set(dailyTasks); } };
+    window.delDaily = (i) => { if(isAdmin) { dailyTasks.splice(i, 1); db.ref('daily').set(dailyTasks); } };
+
     function renderDaily() {
         document.getElementById('dailyList').innerHTML = dailyTasks.map((t, i) => `
             <div class="item-row ${t.done ? 'done' : ''}">
@@ -156,7 +177,80 @@
         `).join('');
     }
 
-    // --- ZONES ---
+    // --- SYNC MAP ZONES ---
+    map.on('pm:create', (e) => {
+        const layer = e.layer;
+        const data = {
+            latlngs: layer.getLatLngs(),
+            color: document.getElementById('zoneColor').value,
+            title: "New Zone",
+            tasks: []
+        };
+        db.ref('zones').push(data);
+        map.removeLayer(layer); // Sync will re-draw it
+    });
+
+    db.ref('zones').on('value', snap => {
+        zoneLayers.clearLayers();
+        const data = snap.val() || {};
+        for (let id in data) {
+            const z = data[id];
+            const layer = L.rectangle(z.latlngs, { color: z.color, fillColor: z.color, fillOpacity: 0.35, weight: 2 });
+            layer.id = id;
+            layer.options.title = z.title;
+            layer.options.tasks = z.tasks || [];
+            zoneLayers.addLayer(layer);
+            setupPopup(layer);
+            
+            layer.on('pm:edit', () => db.ref(`zones/${id}/latlngs`).set(layer.getLatLngs()));
+            layer.on('pm:rotateend', () => db.ref(`zones/${id}/latlngs`).set(layer.getLatLngs()));
+            layer.on('click', (ev) => {
+                if (isAdmin && map.pm.globalRemovalEnabled()) { db.ref(`zones/${id}`).remove(); return; }
+                if (!map.pm.globalEditEnabled() && !map.pm.globalRotateEnabled()) { L.DomEvent.stopPropagation(ev); setupPopup(layer); layer.openPopup(); }
+            });
+        }
+    });
+
+    function setupPopup(layer) {
+        const tasks = (layer.options.tasks || []).map((t, i) => `
+            <div class="item-row ${t.done ? 'done' : ''}" style="background:#f1f3f4; padding:4px;">
+                <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleZT('${layer.id}', ${i})" ${!isAdmin ? 'disabled' : ''}>
+                <span style="flex:1; font-size:11px;">${t.text}</span>
+                ${isAdmin ? `<button class="delete-small" onclick="delZT('${layer.id}', ${i})">×</button>` : ''}
+            </div>
+        `).join('');
+        const div = document.createElement('div');
+        div.style.minWidth = "180px";
+        div.innerHTML = `
+            ${isAdmin ? `<input type="text" id="tIn" style="width:100%; border:none; border-bottom:1px solid #1a73e8; font-weight:bold; outline:none; margin-bottom:8px;" value="${layer.options.title}">` : `<b>${layer.options.title}</b>`}
+            <div style="max-height:100px; overflow-y:auto;">${tasks || '<i style="color:grey; font-size:11px;">No tasks.</i>'}</div>
+            ${isAdmin ? `<div style="display:flex; gap:5px; margin-top:8px;"><input type="text" id="zIn" placeholder="Task..." style="flex:1; font-size:11px;"><button id="zAdd">+</button></div>` : ''}
+        `;
+        if(isAdmin) {
+            div.querySelector('#tIn').onchange = (e) => db.ref(`zones/${layer.id}/title`).set(e.target.value);
+            div.querySelector('#zAdd').onclick = () => {
+                const v = div.querySelector('#zIn').value.trim();
+                if(v) { 
+                    const t = [...layer.options.tasks, {text:v, done:false}];
+                    db.ref(`zones/${layer.id}/tasks`).set(t);
+                }
+            };
+        }
+        layer.bindPopup(div);
+    }
+
+    window.toggleZT = (id, idx) => {
+        db.ref(`zones/${id}/tasks/${idx}`).once('value', s => {
+            db.ref(`zones/${id}/tasks/${idx}/done`).set(!s.val().done);
+        });
+    };
+    window.delZT = (id, idx) => {
+        const t = [...zoneLayers.getLayer(Object.keys(zoneLayers._layers).find(k => zoneLayers._layers[k].id === id)).options.tasks];
+        t.splice(idx, 1);
+        db.ref(`zones/${id}/tasks`).set(t);
+    };
+
+    // --- MAP TOOLS ---
     function startDraw() { if(isAdmin) { disableAll(); map.pm.enableDraw('Rectangle'); } }
     function forceMode(m) {
         if(!isAdmin) return;
@@ -174,42 +268,6 @@
         map.pm.disableGlobalEditMode(); map.pm.disableGlobalRotateMode(); map.pm.disableGlobalRemovalMode(); map.pm.disableDraw();
         document.querySelectorAll('.btn').forEach(b => b.classList.remove('btn-active'));
     }
-
-    map.on('pm:create', (e) => {
-        const layer = e.layer;
-        layer.setStyle({ color: document.getElementById('zoneColor').value, fillColor: document.getElementById('zoneColor').value, fillOpacity: 0.35, weight: 2 });
-        layer.options.title = "New Zone"; layer.options.tasks = [];
-        zoneLayers.addLayer(layer);
-        setupPopup(layer);
-        layer.on('click', (ev) => {
-            if (isAdmin && map.pm.globalRemovalEnabled()) { zoneLayers.removeLayer(layer); return; }
-            if (!map.pm.globalEditEnabled() && !map.pm.globalRotateEnabled()) { L.DomEvent.stopPropagation(ev); setupPopup(layer); layer.openPopup(); }
-        });
-    });
-
-    function setupPopup(layer) {
-        const tasks = (layer.options.tasks || []).map((t, i) => `
-            <div class="item-row ${t.done ? 'done' : ''}" style="background:#f1f3f4; padding:4px;">
-                <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleZoneT(${layer._leaflet_id}, ${i})" ${!isAdmin ? 'disabled' : ''}>
-                <span style="flex:1; font-size:11px;">${t.text}</span>
-                ${isAdmin ? `<button class="delete-small" onclick="delZoneT(${layer._leaflet_id}, ${i})">×</button>` : ''}
-            </div>
-        `).join('');
-        const div = document.createElement('div');
-        div.style.minWidth = "180px";
-        div.innerHTML = `
-            ${isAdmin ? `<input type="text" id="tIn" style="width:100%; border:none; border-bottom:1px solid #1a73e8; font-weight:bold; outline:none; margin-bottom:8px;" value="${layer.options.title}">` : `<div style="font-weight:bold; margin-bottom:8px;">${layer.options.title}</div>`}
-            <div style="max-height:100px; overflow-y:auto;">${tasks || '<i style="color:grey; font-size:11px;">No tasks.</i>'}</div>
-            ${isAdmin ? `<div style="display:flex; gap:5px; margin-top:8px;"><input type="text" id="zIn" placeholder="Task..." style="flex:1; font-size:11px;"><button id="zAdd">+</button></div>` : ''}
-        `;
-        if(isAdmin) {
-            div.querySelector('#tIn').onchange = (e) => { layer.options.title = e.target.value; };
-            div.querySelector('#zAdd').onclick = () => { const v = div.querySelector('#zIn').value.trim(); if(v){ layer.options.tasks.push({text:v, done:false}); setupPopup(layer); } };
-        }
-        layer.bindPopup(div);
-    }
-    window.toggleZoneT = (id, idx) => { if(isAdmin) { const l = zoneLayers.getLayer(id); l.options.tasks[idx].done = !l.options.tasks[idx].done; setupPopup(l); } };
-    window.delZoneT = (id, idx) => { if(isAdmin) { const l = zoneLayers.getLayer(id); l.options.tasks.splice(idx, 1); setupPopup(l); } };
 </script>
 </body>
 </html>
