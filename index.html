@@ -1,4 +1,74 @@
-// --- FIREBASE CONFIG (Kept your exact keys) ---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Austin Challenge Map</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.css" />
+    <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.min.js"></script>
+
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        #map { height: 100vh; width: 100vw; background: #e5e3df; }
+        .lock-status { position: absolute; top: 10px; left: 10px; z-index: 3000; padding: 5px 12px; border-radius: 20px; font-size: 10px; font-weight: bold; text-transform: uppercase; cursor: pointer; transition: 0.3s; }
+        .status-locked { background: #ea4335; color: white; box-shadow: 0 0 10px rgba(234,67,53,0.4); }
+        .status-unlocked { background: #34a853; color: white; box-shadow: 0 0 10px rgba(52,168,83,0.4); }
+        .progress-container { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); z-index: 2000; background: white; padding: 15px 25px; border-radius: 50px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); width: 350px; text-align: center; }
+        .bar-bg { background: #e8eaed; height: 12px; border-radius: 10px; width: 100%; overflow: hidden; margin-top: 8px; }
+        .bar-fill { background: linear-gradient(90deg, #34a853, #2ecc71); height: 100%; width: 0%; transition: width 0.5s; }
+        .points-display { font-size: 14px; font-weight: bold; color: #202124; padding: 2px 8px; }
+        .editable-points { cursor: pointer; border: 1px dashed #ccc; border-radius: 4px; background: #fdfdfd; }
+        .controls { position: absolute; top: 20px; right: 20px; z-index: 2000; background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 25px rgba(0,0,0,0.2); width: 180px; }
+        .daily-dashboard { position: absolute; bottom: 30px; left: 20px; z-index: 2000; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 30px rgba(0,0,0,0.3); width: 280px; max-height: 350px; display: flex; flex-direction: column; border-left: 6px solid #34a853; }
+        .btn { color: white; border: none; padding: 10px; width: 100%; border-radius: 6px; cursor: pointer; font-weight: bold; margin-bottom: 6px; font-size: 11px; text-transform: uppercase; }
+        .btn-draw { background: #1a73e8; } .btn-edit { background: #fbbc05; color: #333; } .btn-rotate { background: #9c27b0; } .btn-delete { background: #ea4335; }
+        .btn-active { border: 2px solid black; transform: scale(1.02); }
+        .item-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; background: #f8f9fa; padding: 6px; border-radius: 6px; border: 1px solid #eee; font-size: 13px; }
+        .item-row.done span { text-decoration: line-through; color: #bdc1c6; }
+        .delete-small { background: none; border: none; color: #ea4335; cursor: pointer; font-weight: bold; font-size: 16px; }
+        .admin-only { display: none !important; }
+        .is-admin .admin-only { display: flex !important; }
+        input:read-only { background: transparent; cursor: default; border: none !important; }
+    </style>
+</head>
+<body>
+
+<div id="lockBtn" class="lock-status status-locked" onclick="handleAuth()">Locked (View Only)</div>
+
+<div class="progress-container">
+    <div style="font-size: 10px; font-weight: 800; color: #5f6368;">WEEKLY PROGRESS</div>
+    <div class="bar-bg"><div id="progressBar" class="bar-fill"></div></div>
+    <span id="pointsLabel" class="points-display">Points: <span id="currentPoints">0</span> / 100</span>
+</div>
+
+<div class="controls admin-only">
+    <input type="color" id="zoneColor" value="#1a73e8" style="width:100%; height:25px; margin-bottom:10px;">
+    <button class="btn btn-draw" onclick="startDraw()">Draw Box</button>
+    <button id="resizeBtn" class="btn btn-edit" onclick="forceMode('edit')">Resize</button>
+    <button id="rotateBtn" class="btn btn-rotate" onclick="forceMode('rotate')">Rotate</button>
+    <button id="deleteBtn" class="btn btn-delete" onclick="forceMode('removal')">Delete Box</button>
+</div>
+
+<div class="daily-dashboard">
+    <input type="text" id="dailyTitle" readonly value="Daily Challenges">
+    <input type="text" id="dailyDate" readonly placeholder="No date set">
+    <div id="dailyList" style="overflow-y:auto; flex-grow:1;"></div>
+    <div class="add-row admin-only" style="gap:5px; margin-top:10px;">
+        <input type="text" id="dailyInput" placeholder="Add task..." style="flex:1;">
+        <button onclick="addDailyItem()" style="background:#34a853; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">+</button>
+    </div>
+</div>
+
+<div id="map"></div>
+
+<script>
+    // --- FIREBASE CONFIG ---
     const firebaseConfig = {
       apiKey: "AIzaSyCKJAVMMDxEbmrF3samhozl9PbdNmMvqrY",
       authDomain: "dallas-map-76f9f.firebaseapp.com",
@@ -13,56 +83,39 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
+    // --- MAP SETUP ---
     const map = L.map('map').setView([30.2672, -97.7431], 14);
     let zoneLayers = L.featureGroup().addTo(map);
-    L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { subdomains:['mt0','mt1','mt2','mt3'] }).addTo(map);
+    L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { subdomains: ['mt0', 'mt1', 'mt2', 'mt3'] }).addTo(map);
 
     let isAdmin = false;
     const PASS = "austin2026";
 
     function handleAuth() {
         if (!isAdmin) {
-            if (prompt("Enter Password to Edit:") === PASS) {
-                isAdmin = true;
-                applySecurity(true);
-            } else { alert("Incorrect password."); }
-        } else {
-            isAdmin = false;
-            applySecurity(false);
-        }
+            if (prompt("Enter Password:") === PASS) { isAdmin = true; applySecurity(true); }
+        } else { isAdmin = false; applySecurity(false); }
     }
 
     function applySecurity(isUnlocking) {
         document.body.classList.toggle('is-admin', isUnlocking);
         const lockBtn = document.getElementById('lockBtn');
-        lockBtn.innerText = isUnlocking ? "Admin Active (Unlocked)" : "Locked (View Only)";
+        lockBtn.innerText = isUnlocking ? "Admin Active" : "Locked (View Only)";
         lockBtn.className = isUnlocking ? "lock-status status-unlocked" : "lock-status status-locked";
-        
         document.getElementById('pointsLabel').onclick = isUnlocking ? updatePoints : null;
-        document.getElementById('pointsLabel').classList.toggle('editable-points', isUnlocking);
         document.getElementById('dailyTitle').readOnly = !isUnlocking;
         document.getElementById('dailyDate').readOnly = !isUnlocking;
-
-        // Toggle Draggability for all layers
-        zoneLayers.eachLayer(layer => {
-            if (isUnlocking) layer.pm.enableLayerDrag();
-            else layer.pm.disableLayerDrag();
-        });
-
+        zoneLayers.eachLayer(l => isUnlocking ? l.pm.enableLayerDrag() : l.pm.disableLayerDrag());
         if (isUnlocking) {
             document.getElementById('dailyTitle').onchange = (e) => db.ref('meta/title').set(e.target.value);
             document.getElementById('dailyDate').onchange = (e) => db.ref('meta/date').set(e.target.value);
-        } else {
-            disableAll();
-        }
+        } else { disableAll(); }
         renderDaily();
     }
 
-    // --- PROGRESS & DAILY SYNC (Standard) ---
     function updatePoints() {
-        if (!isAdmin) return;
         const current = parseInt(document.getElementById('currentPoints').innerText);
-        const input = prompt("Total Score / Change score (+/-):", current);
+        const input = prompt("Total Score / Change (+/-):", current);
         if (input === null) return;
         let newVal = input.startsWith('+') ? current + parseInt(input.substring(1)) : (input.startsWith('-') ? current - parseInt(input.substring(1)) : parseInt(input));
         db.ref('meta/points').set(Math.max(0, Math.min(100, newVal || 0)));
@@ -82,19 +135,17 @@
         const inp = document.getElementById('dailyInput');
         if (inp.value.trim()) { dailyTasks.push({ text: inp.value.trim(), done: false }); db.ref('daily').set(dailyTasks); inp.value = ''; }
     }
-    window.toggleDaily = (i) => { if(isAdmin) { dailyTasks[i].done = !dailyTasks[i].done; db.ref('daily').set(dailyTasks); } };
-    window.delDaily = (i) => { if(isAdmin) { dailyTasks.splice(i, 1); db.ref('daily').set(dailyTasks); } };
+    window.toggleDaily = (i) => { if (isAdmin) { dailyTasks[i].done = !dailyTasks[i].done; db.ref('daily').set(dailyTasks); } };
+    window.delDaily = (i) => { if (isAdmin) { dailyTasks.splice(i, 1); db.ref('daily').set(dailyTasks); } };
     function renderDaily() {
         document.getElementById('dailyList').innerHTML = dailyTasks.map((t, i) => `
             <div class="item-row ${t.done ? 'done' : ''}">
                 <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleDaily(${i})" ${!isAdmin ? 'disabled' : ''}>
                 <span style="flex:1;">${t.text}</span>
                 ${isAdmin ? `<button class="delete-small" onclick="delDaily(${i})">×</button>` : ''}
-            </div>
-        `).join('');
+            </div>`).join('');
     }
 
-    // --- ZONE SYNC WITH DRAG SUPPORT ---
     map.on('pm:create', (e) => {
         const layer = e.layer;
         const data = { latlngs: layer.getLatLngs(), color: document.getElementById('zoneColor').value, title: "New Zone", tasks: [] };
@@ -108,23 +159,15 @@
         for (let id in data) {
             const z = data[id];
             const layer = L.polygon(z.latlngs, { color: z.color, fillColor: z.color, fillOpacity: 0.35, weight: 2 });
-            layer.id = id;
-            layer.options.title = z.title;
-            layer.options.tasks = z.tasks || [];
+            layer.id = id; layer.options.title = z.title; layer.options.tasks = z.tasks || [];
             zoneLayers.addLayer(layer);
             setupPopup(layer);
-            
             if (isAdmin) layer.pm.enableLayerDrag();
-
-            // Save to DB after Drag, Resize, or Rotate
-            layer.on('pm:update', () => { db.ref(`zones/${id}/latlngs`).set(layer.getLatLngs()); });
-            layer.on('pm:dragend', () => { db.ref(`zones/${id}/latlngs`).set(layer.getLatLngs()); });
-
+            layer.on('pm:update', () => db.ref(`zones/${id}/latlngs`).set(layer.getLatLngs()));
+            layer.on('pm:dragend', () => db.ref(`zones/${id}/latlngs`).set(layer.getLatLngs()));
             layer.on('click', (ev) => {
                 if (isAdmin && map.pm.globalRemovalEnabled()) { db.ref(`zones/${id}`).remove(); return; }
-                if (!map.pm.globalEditEnabled() && !map.pm.globalRotateEnabled()) { 
-                    L.DomEvent.stopPropagation(ev); setupPopup(layer); layer.openPopup(); 
-                }
+                if (!map.pm.globalEditEnabled() && !map.pm.globalRotateEnabled()) { L.DomEvent.stopPropagation(ev); setupPopup(layer); layer.openPopup(); }
             });
         }
     });
@@ -135,41 +178,29 @@
                 <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleZT('${layer.id}', ${i})" ${!isAdmin ? 'disabled' : ''}>
                 <span style="flex:1; font-size:11px;">${t.text}</span>
                 ${isAdmin ? `<button class="delete-small" onclick="delZT('${layer.id}', ${i})">×</button>` : ''}
-            </div>
-        `).join('');
+            </div>`).join('');
         const div = document.createElement('div');
         div.style.minWidth = "180px";
         div.innerHTML = `
             ${isAdmin ? `<input type="text" id="tIn" style="width:100%; border:none; border-bottom:1px solid #1a73e8; outline:none;" value="${layer.options.title}">` : `<b>${layer.options.title}</b>`}
             <div style="max-height:100px; overflow-y:auto; margin-top:8px;">${tasks || '<i style="color:grey; font-size:11px;">No tasks.</i>'}</div>
-            ${isAdmin ? `<div style="display:flex; gap:5px; margin-top:8px;"><input type="text" id="zIn" placeholder="Task..." style="flex:1; font-size:11px;"><button id="zAdd">+</button></div>` : ''}
-        `;
-        if(isAdmin) {
+            ${isAdmin ? `<div style="display:flex; gap:5px; margin-top:8px;"><input type="text" id="zIn" placeholder="Task..." style="flex:1; font-size:11px;"><button id="zAdd">+</button></div>` : ''}`;
+        if (isAdmin) {
             div.querySelector('#tIn').onchange = (e) => db.ref(`zones/${layer.id}/title`).set(e.target.value);
             div.querySelector('#zAdd').onclick = () => {
                 const v = div.querySelector('#zIn').value.trim();
-                if(v) { 
-                    const t = [...layer.options.tasks, {text:v, done:false}];
-                    db.ref(`zones/${layer.id}/tasks`).set(t);
-                }
+                if (v) { const t = [...layer.options.tasks, { text: v, done: false }]; db.ref(`zones/${layer.id}/tasks`).set(t); }
             };
         }
         layer.bindPopup(div);
     }
 
-    window.toggleZT = (id, idx) => {
-        db.ref(`zones/${id}/tasks/${idx}`).once('value', s => { db.ref(`zones/${id}/tasks/${idx}/done`).set(!s.val().done); });
-    };
-    window.delZT = (id, idx) => {
-        db.ref(`zones/${id}/tasks`).once('value', s => {
-            let t = s.val(); t.splice(idx, 1); db.ref(`zones/${id}/tasks`).set(t);
-        });
-    };
+    window.toggleZT = (id, idx) => { db.ref(`zones/${id}/tasks/${idx}`).once('value', s => db.ref(`zones/${id}/tasks/${idx}/done`).set(!s.val().done)); };
+    window.delZT = (id, idx) => { db.ref(`zones/${id}/tasks`).once('value', s => { let t = s.val(); t.splice(idx, 1); db.ref(`zones/${id}/tasks`).set(t); }); };
 
-    function startDraw() { if(isAdmin) { disableAll(); map.pm.enableDraw('Rectangle'); } }
-
+    function startDraw() { if (isAdmin) { disableAll(); map.pm.enableDraw('Rectangle'); } }
     function forceMode(m) {
-        if(!isAdmin) return;
+        if (!isAdmin) return;
         const btnId = m === 'edit' ? 'resizeBtn' : (m === 'rotate' ? 'rotateBtn' : 'deleteBtn');
         const wasActive = document.getElementById(btnId).classList.contains('btn-active');
         disableAll();
@@ -180,11 +211,10 @@
             document.getElementById(btnId).classList.add('btn-active');
         }
     }
-
     function disableAll() {
-        map.pm.disableGlobalEditMode();
-        map.pm.disableGlobalRotateMode();
-        map.pm.disableGlobalRemovalMode();
-        map.pm.disableDraw();
+        map.pm.disableGlobalEditMode(); map.pm.disableGlobalRotateMode(); map.pm.disableGlobalRemovalMode(); map.pm.disableDraw();
         document.querySelectorAll('.btn').forEach(b => b.classList.remove('btn-active'));
     }
+</script>
+</body>
+</html>
